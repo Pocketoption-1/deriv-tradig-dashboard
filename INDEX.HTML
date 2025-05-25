@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Deriv Trading Dashboard</title>
+    <style>
+        :root {
+            --primary: #4CAF50;
+            --secondary: #FF4444;
+            --dark: #1a1a1a;
+            --light: #f5f5f5;
+            --gray: #ddd;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: var(--dark);
+            background-color: var(--light);
+            padding: 20px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        
+        h1, h2 {
+            color: var(--primary);
+            text-align: center;
+        }
+        
+        .card {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin: 15px 0 5px;
+            font-weight: bold;
+        }
+        
+        select, input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid var(--gray);
+            border-radius: 4px;
+            font-size: 16px;
+        }
+        
+        button {
+            background-color: var(--primary);
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            margin: 10px 0;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            width: 100%;
+            transition: background-color 0.3s;
+        }
+        
+        button:hover {
+            background-color: #45a049;
+        }
+        
+        #loginBtn {
+            background-color: var(--secondary);
+        }
+        
+        #loginBtn:hover {
+            background-color: #CC0000;
+        }
+        
+        #status {
+            padding: 10px;
+            border-radius: 4px;
+            margin: 15px 0;
+            background-color: #f8f9fa;
+            border-left: 4px solid transparent;
+        }
+        
+        .error {
+            border-left-color: #dc3545;
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        
+        .success {
+            border-left-color: #28a745;
+            background-color: #d4edda;
+            color: #155724;
+        }
+        
+        .info {
+            border-left-color: #17a2b8;
+            background-color: #d1ecf1;
+            color: #0c5460;
+        }
+        
+        .hidden {
+            display: none;
+        }
+        
+        #accountInfo {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 15px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid var(--gray);
+        }
+        
+        .balance {
+            font-weight: bold;
+            color: var(--primary);
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>Deriv Trading Dashboard</h1>
+        
+        <div id="authSection">
+            <button id="loginBtn">Login with Deriv</button>
+            <p id="status" class="info">Please login to start trading</p>
+        </div>
+        
+        <div id="dashboard" class="hidden">
+            <div id="accountInfo">
+                <div>Account: <span id="accountId"></span></div>
+                <div>Balance: <span id="balance" class="balance"></span> USD</div>
+            </div>
+            
+            <h2>New Trade</h2>
+            <label for="symbol">Select Asset:</label>
+            <select id="symbol">
+                <option value="R_100">Volatility 100</option>
+                <option value="1HZ100V">1Hz Volatility 100</option>
+                <option value="R_50">Volatility 50</option>
+                <option value="R_25">Volatility 25</option>
+            </select>
+            
+            <label for="amount">Amount (USD):</label>
+            <input type="number" id="amount" placeholder="e.g., 10" min="5" step="1" value="10">
+            
+            <label for="duration">Duration (ticks):</label>
+            <input type="number" id="duration" min="1" max="10" value="5">
+            
+            <label for="contract_type">Contract Type:</label>
+            <select id="contract_type">
+                <option value="CALL">Rise</option>
+                <option value="PUT">Fall</option>
+            </select>
+            
+            <button id="tradeBtn">Place Trade</button>
+            <p id="tradeStatus"></p>
+        </div>
+        
+        <div id="tradesHistory" class="card hidden">
+            <h2>Trade History</h2>
+            <table id="tradesTable" style="width:100%; border-collapse: collapse;">
+                <thead>
+                    <tr>
+                        <th style="text-align:left;">Asset</th>
+                        <th style="text-align:left;">Type</th>
+                        <th style="text-align:right;">Amount</th>
+                        <th style="text-align:right;">P/L</th>
+                    </tr>
+                </thead>
+                <tbody id="tradesBody">
+                    <!-- Filled by JavaScript -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        // Configuration
+        const APP_ID = "76088";
+        const REDIRECT_URI = encodeURIComponent(window.location.href.split('?')[0]);
+        const WS_URL = "wss://ws.deriv.com/websockets/v3";
+        
+        // DOM Elements
+        const loginBtn = document.getElementById("loginBtn");
+        const dashboard = document.getElementById("dashboard");
+        const authSection = document.getElementById("authSection");
+        const statusEl = document.getElementById("status");
+        const tradeStatusEl = document.getElementById("tradeStatus");
+        const accountIdEl = document.getElementById("accountId");
+        const balanceEl = document.getElementById("balance");
+        const tradesHistory = document.getElementById("tradesHistory");
+        
+        // State
+        let ws;
+        let token;
+        let accountId;
+        let balance = 0;
+        let trades = [];
+        
+        // Initialize
+        checkAuth();
+        
+        // Event Listeners
+        loginBtn.addEventListener("click", handleLogin);
+        document.getElementById("tradeBtn").addEventListener("click", placeTrade);
+        
+        // Functions
+        function checkAuth() {
+            const params = new URLSearchParams(window.location.search);
+            token = params.get("token");
+            
+            if (token) {
+                initWebSocket();
+            } else {
+                showMessage("Please login to start trading", "info");
+            }
+        }
+        
+        function handleLogin() {
+            window.location.href = `https://oauth.deriv.com/oauth2/authorize?app_id=${APP_ID}&l=en&brand=deriv&redirect_uri=${REDIRECT_URI}`;
+        }
+        
+        function initWebSocket() {
+            ws = new WebSocket(WS_URL);
+            
+            ws.onopen = () => {
+                ws.send(JSON.stringify({ authorize: token }));
+                showMessage("Connecting to Deriv API...", "info");
+            };
+            
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                
+                if (data.error) {
+                    showMessage(`Error: ${data.error.message}`, "error");
+                    return;
+                }
+                
+                switch (data.msg_type) {
+                    case "authorize":
+                        handleAuthorization(data);
+                        break;
+                    case "balance":
+                        updateBalance(data);
+                        break;
+                    case "buy":
+                        handleTradeResponse(data);
+                        break;
+                    case "portfolio":
+                        updatePortfolio(data);
+                        break;
+                }
+            };
+            
+            ws.onerror = (error) => {
+                showMessage(`WebSocket error: ${error.message}`, "error");
+            };
+            
+            ws.onclose = () => {
+                showMessage("Connection closed. Refresh to reconnect.", "error");
+            };
+        }
+        
+        function handleAuthorization(data) {
+            accountId = data.authorize.loginid;
+            balance = parseFloat(data.authorize.balance);
+            
+            // Update UI
+            accountIdEl.textContent = accountId;
+            balanceEl.textContent = balance.toFixed(2);
+            
+            authSection.classList.add("hidden");
+            dashboard.classList.remove("hidden");
+            tradesHistory.classList.remove("hidden");
+            
+            showMessage(`Connected as ${accountId}`, "success");
+            
+            // Get initial balance and portfolio
+            ws.send(JSON.stringify({ balance: 1, subscribe: 1 }));
+            ws.send(JSON.stringify({ portfolio: 1, subscribe: 1 }));
+        }
+        
+        function updateBalance(data) {
+            balance = parseFloat(data.balance.balance);
+            balanceEl.textContent = balance.to
