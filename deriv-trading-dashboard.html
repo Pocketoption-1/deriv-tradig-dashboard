@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>GitHub Deriv Bot</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root {
+      --primary: #4CAF50;
+      --secondary: #2196F3;
+      --danger: #f44336;
+      --dark: #333;
+      --light: #f5f5f5;
+    }
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #f5f7fa;
+      margin: 0;
+      padding: 0;
+      line-height: 1.6;
+    }
+    .container {
+      max-width: 800px;
+      margin: 20px auto;
+      padding: 20px;
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    .header {
+      background: linear-gradient(135deg, var(--primary) 0%, #2E7D32 100%);
+      color: white;
+      padding: 20px;
+      text-align: center;
+      border-radius: 8px 8px 0 0;
+    }
+    button {
+      background: var(--secondary);
+      color: white;
+      border: none;
+      padding: 10px 15px;
+      margin: 5px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      transition: all 0.3s;
+    }
+    button:hover {
+      opacity: 0.9;
+      transform: translateY(-1px);
+    }
+    button.primary {
+      background: var(--primary);
+    }
+    button.danger {
+      background: var(--danger);
+    }
+    .hidden {
+      display: none;
+    }
+    .dashboard {
+      margin-top: 20px;
+    }
+    .trade-panel {
+      background: white;
+      padding: 15px;
+      border-radius: 8px;
+      margin: 15px 0;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    input, select {
+      width: 100%;
+      padding: 8px;
+      margin: 5px 0;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      box-sizing: border-box;
+    }
+    .alert {
+      padding: 10px;
+      border-radius: 4px;
+      margin: 10px 0;
+    }
+    .alert-success {
+      background: #dff0d8;
+      color: #3c763d;
+    }
+    .alert-danger {
+      background: #f2dede;
+      color: #a94442;
+    }
+    .stats {
+      display: flex;
+      justify-content: space-between;
+      margin: 15px 0;
+    }
+    .stat-card {
+      flex: 1;
+      padding: 10px;
+      background: white;
+      border-radius: 8px;
+      margin: 0 5px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>GitHub Deriv Bot</h1>
+      <p>Lightweight trading interface for Deriv API</p>
+    </div>
+
+    <div id="auth-section">
+      <h2>Connect to Deriv</h2>
+      <p>Login with your Deriv account to start trading</p>
+      <button class="primary" onclick="startLogin()">Login with Deriv</button>
+      <button onclick="startSignup()">Create Account</button>
+    </div>
+
+    <div id="dashboard" class="hidden">
+      <div class="stats">
+        <div class="stat-card">
+          <h3>Account ID</h3>
+          <p id="loginId">-</p>
+        </div>
+        <div class="stat-card">
+          <h3>Balance</h3>
+          <p id="balance">-</p>
+        </div>
+        <div class="stat-card">
+          <h3>Currency</h3>
+          <p id="currency">-</p>
+        </div>
+      </div>
+
+      <div id="alert-container"></div>
+
+      <div class="trade-panel">
+        <h3>Quick Trade</h3>
+        <select id="symbol">
+          <option value="R_100">Volatility 100</option>
+          <option value="R_50">Volatility 50</option>
+          <option value="1HZ100V">Synthetic 100</option>
+        </select>
+        
+        <select id="duration">
+          <option value="1">1 min</option>
+          <option value="5">5 min</option>
+          <option value="15">15 min</option>
+        </select>
+        
+        <input type="number" id="amount" min="0.35" step="0.05" value="0.35" placeholder="Amount">
+        
+        <div style="margin-top: 10px;">
+          <button class="primary" onclick="trade('CALL')">Buy Rise</button>
+          <button class="danger" onclick="trade('PUT')">Buy Fall</button>
+        </div>
+      </div>
+
+      <button onclick="logout()" style="margin-top: 20px;">Logout</button>
+    </div>
+  </div>
+
+  <script>
+    // Configuration - REPLACE WITH YOUR OWN VALUES
+    const config = {
+      app_id: 76613, // Get from Deriv Developer Portal
+      affiliate_id: 0, // Optional affiliate ID
+      redirect_uri: window.location.href.split('?')[0],
+      ws_url: "wss://ws.derivws.com/websockets/v3"
+    };
+
+    // Global variables
+    let deriv_token = null;
+    let websocket = null;
+    let account_info = null;
+
+    // Initialize on page load
+    document.addEventListener('DOMContentLoaded', function() {
+      checkAuth();
+    });
+
+    // Check authentication status
+    function checkAuth() {
+      deriv_token = localStorage.getItem("deriv_token");
+      const url_token = new URLSearchParams(window.location.search).get("token");
+
+      if (url_token) {
+        localStorage.setItem("deriv_token", url_token);
+        window.history.replaceState({}, document.title, config.redirect_uri);
+        deriv_token = url_token;
+      }
+
+      if (deriv_token) {
+        connectToDeriv();
+      }
+    }
+
+    // Connect to Deriv WebSocket
+    function connectToDeriv() {
+      websocket = new WebSocket(config.ws_url + "?app_id=" + config.app_id);
+
+      websocket.onopen = () => {
+        websocket.send(JSON.stringify({ authorize: deriv_token }));
+      };
+
+      websocket.onmessage = (msg) => {
+        const data = JSON.parse(msg.data);
+        
+        if (data.error) {
+          showAlert(data.error.message, 'danger');
+          logout();
+          return;
+        }
+
+        switch(data.msg_type) {
+          case "authorize":
+            handleAuthorization(data);
+            break;
+          case "balance":
+            updateBalance(data);
+            break;
+          case "buy":
+            handleTradeResult(data);
+            break;
+        }
+      };
+
+      websocket.onclose = () => {
+        showAlert("Connection lost. Reconnecting...", 'danger');
+        setTimeout(connectToDeriv, 3000);
+      };
+    }
+
+    // Handle authorization response
+    function handleAuthorization(data) {
+      account_info = data.authorize;
+      document.getElementById('loginId').textContent = account_info.loginid;
+      document.getElementById('currency').textContent = account_info.currency;
+
+      // Get balance
+      websocket.send(JSON.stringify({ balance: 1, subscribe: 1 }));
+
+      // Show dashboard
+      document.getElementById('auth-section').classList.add('hidden');
+      document.getElementById('dashboard').classList.remove('hidden');
+    }
+
+    // Update balance display
+    function updateBalance(data) {
+      document.getElementById('balance').textContent = 
+        data.balance.balance.toFixed(2) + " " + account_info.currency;
+    }
+
+    // Place a trade
+    function trade(contract_type) {
+      const symbol = document.getElementById('symbol').value;
+      const duration = document.getElementById('duration').value;
+      const amount = parseFloat(document.getElementById('amount').value);
+
+      if (isNaN(amount) {
+        showAlert("Please enter a valid amount", 'danger');
+        return;
+      }
+
+      const proposal = {
+        proposal: 1,
+        amount: amount,
+        basis: "stake",
+        contract_type: contract_type,
+        currency: account_info.currency,
+        duration: duration,
+        duration_unit: "m",
+        symbol: symbol
+      };
+
+      websocket.send(JSON.stringify(proposal));
+      showAlert("Processing your trade...", 'success');
+    }
+
+    // Handle trade result
+    function handleTradeResult(data) {
+      if (data.error) {
+        showAlert("Trade failed: " + data.error.message, 'danger');
+      } else {
+        showAlert("Trade successful! Payout: " + data.buy.payout, 'success');
+        // Update balance after trade
+        websocket.send(JSON.stringify({ balance: 1 }));
+      }
+    }
+
+    // Show alert message
+    function showAlert(message, type) {
+      const alertDiv = document.createElement('div');
+      alertDiv.className = `alert alert-${type}`;
+      alertDiv.textContent = message;
+      
+      const container = document.getElementById('alert-container');
+      container.innerHTML = '';
+      container.appendChild(alertDiv);
+      
+      setTimeout(() => {
+        alertDiv.remove();
+      }, 5000);
+    }
+
+    // Initiate Deriv login
+    function startLogin() {
+      window.location.href = `https://oauth.deriv.com/oauth2/authorize?app_id=${config.app_id}&redirect_uri=${encodeURIComponent(config.redirect_uri)}`;
+    }
+
+    // Initiate Deriv signup
+    function startSignup() {
+      window.location.href = `https://deriv.com/signup/?affiliate_id=${config.affiliate_id}`;
+    }
+
+    // Logout function
+    function logout() {
+      localStorage.removeItem("deriv_token");
+      if (websocket) websocket.close();
+      location.reload();
+    }
+  </script>
+</body>
+</html>
