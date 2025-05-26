@@ -495,4 +495,14 @@
     }
   </script>
 </body>
-</html>
+</html><!-- Login button -->
+<a id="login-link" href="#">Login with Deriv</a>
+
+<script>
+  const app_id = "76613"; // Your correct Deriv App ID
+  const redirect_uri = "https://pocketoption-1.github.io/deriv-tradig-dashboard/";
+
+  // Generate the OAuth login link
+  document.getElementById("login-link").href =
+    `https://oauth.deriv.com/oauth2/authorize?app_id=${app_id}&redirect_uri=${encodeURIComponent(redirect_uri)}`;
+</script>
